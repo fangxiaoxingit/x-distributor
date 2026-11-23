@@ -77,13 +77,21 @@ Chrome 打开 `chrome://extensions` → 打开右上角「开发者模式」→�
   → chrome.scripting.executeScript({func: injectFunction, args:[data]})
         ▼
 [平台适配器] src/sync/adapters/（每平台图文/视频各一个，函数在平台页面内执行，必须自包含）
-  waitForElement 等 DOM → DataTransfer 塞文件 → ClipboardEvent("paste") 填富文本
+  waitForElement 等 DOM（微前端站点需用 deepQuery 穿透 shadow root）
+  → DataTransfer 塞文件 → native setter + input/change 填文本框
   → 按钮文本匹配点击「发布/发送」（仅在开启自动发布时）
 ```
+
+## 开发：新增分发平台
+
+想加一个平台？先读 [docs/adapter-development.md](docs/adapter-development.md)。
+
+里面记录了适配器的执行环境约束（注入函数必须自包含、运行在隔离世界）、三类最常见的坑（**微前端 shadow DOM 穿透查询**、React 受控组件赋值、文件上传注入），以及 jsdom 复现测试的方法。国内创作者后台大量使用 wujie / qiankun 微前端，`document.querySelector` 会一律返回 `null`，这份文档给出了可复制粘贴的深层查询工具函数。
 
 ## 已知限制
 
 - **平台页面改版可能导致分发失效**：适配器依赖各平台创作者页的 DOM 结构，平台改版后需对照更新 `src/sync/adapters/` 中的选择器；x.com 改版则更新 `src/contents/x.tsx` 与 `src/extract/tweet.ts` 中的选择器
+- **微前端站点的 DOM 可能在 shadow root 内**：视频号助手即是此类，适配器使用递归深层查询；若某平台改版后适配器突然「什么都没做且无报错」，优先怀疑这一点，排查方法见上述开发文档
 - **视频解析依赖推特公开 syndication 接口**（`cdn.syndication.twimg.com`），接口失效时自动降级为图文；GIF 帖按视频（mp4）处理
 - 推文里的短链按页面显示文本提取；话题标签作为普通文本进入正文（各平台的话题组件需手动补）
 - 登录态检测未实现：未登录的平台页会停在上传入口，需手动登录后重试
