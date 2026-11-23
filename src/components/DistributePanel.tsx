@@ -419,14 +419,18 @@ export function DistributePanel() {
   const hasImage = media.some((m) => m.kind === "image")
   const hasVideoItem = media.some((m) => m.kind === "video")
 
-  // 图文模式下抖音/小红书不支持纯文字；即刻/微博支持
+  // 图文模式下抖音/小红书不支持纯文字；即刻/微博支持；视频号仅支持视频
   const platformDisabled = (key: string): boolean => {
     if (mode === "VIDEO") return !hasVideoItem
+    if (key === "channels") return true // 视频号无图文/纯文字发布
     return key !== "okjike" && key !== "weibo" && !hasImage
   }
 
-  const disabledReason =
-    mode === "VIDEO" ? "没有可用的视频" : "纯文字帖不支持该平台（即刻、微博除外）"
+  const disabledReasonFor = (key: string): string => {
+    if (mode === "VIDEO") return "没有可用的视频"
+    if (key === "channels") return "视频号仅支持视频发布"
+    return "纯文字帖不支持该平台（即刻、微博除外）"
+  }
 
   // ---------- 下载媒体（图片原图 / 视频） ----------
   // 走 background 的 chrome.downloads，避开跨域 a.download 失效问题；
@@ -702,7 +706,7 @@ export function DistributePanel() {
                   name={p.name}
                   selected={platformKeys.includes(p.key)}
                   disabled={platformDisabled(p.key)}
-                  disabledReason={disabledReason}
+                  disabledReason={disabledReasonFor(p.key)}
                   onToggle={() => togglePlatform(p.key)}
                 />
               ))}

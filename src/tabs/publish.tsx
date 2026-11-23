@@ -66,7 +66,8 @@ export default function Publish() {
         douyin: "抖音",
         rednote: "小红书",
         okjike: "即刻",
-        weibo: "微博"
+        weibo: "微博",
+        channels: "视频号"
       }
       setPlatformNames(
         Array.from(

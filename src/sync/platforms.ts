@@ -7,6 +7,7 @@ import { DynamicOkjike } from "./adapters/okjike-dynamic"
 import { VideoOkjike } from "./adapters/okjike-video"
 import { DynamicWeibo } from "./adapters/weibo-dynamic"
 import { VideoWeibo } from "./adapters/weibo-video"
+import { VideoWeixinChannel } from "./adapters/weixin-channel-video"
 
 export interface PlatformEntry {
   key: string // douyin / rednote / okjike
@@ -99,6 +100,29 @@ export const PLATFORMS: PlatformEntry[] = [
       platformName: "微博",
       injectUrl: "https://weibo.com/upload/channel",
       injectFunction: VideoWeibo
+    }
+  },
+  {
+    key: "channels",
+    name: "视频号",
+    homeUrl: "https://channels.weixin.qq.com",
+    // 视频号仅支持视频发布（无纯文字动态），图文模式在分发面板禁用；
+    // dynamic 复用视频配置仅用于类型占位，实际不会在 DYNAMIC 模式下被调用。
+    dynamic: {
+      type: "DYNAMIC",
+      name: "DYNAMIC_CHANNELS",
+      platformKey: "channels",
+      platformName: "视频号",
+      injectUrl: "https://channels.weixin.qq.com/platform/post/create",
+      injectFunction: VideoWeixinChannel
+    },
+    video: {
+      type: "VIDEO",
+      name: "VIDEO_CHANNELS",
+      platformKey: "channels",
+      platformName: "视频号",
+      injectUrl: "https://channels.weixin.qq.com/platform/post/create",
+      injectFunction: VideoWeixinChannel
     }
   }
 ]

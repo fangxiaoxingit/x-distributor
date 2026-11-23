@@ -4,7 +4,8 @@ const ICON_STYLES: Record<string, { char: string; cls: string }> = {
   douyin: { char: "抖", cls: "bg-[#1f1f2e] text-white" },
   rednote: { char: "红", cls: "bg-[#ff2442] text-white" },
   okjike: { char: "即", cls: "bg-[#ffdc00] text-[#1f1f1f]" },
-  weibo: { char: "微", cls: "bg-[#e6162d] text-white" }
+  weibo: { char: "微", cls: "bg-[#e6162d] text-white" },
+  channels: { char: "视", cls: "bg-[#07c160] text-white" }
 }
 
 export function PlatformIcon({ platformKey }: { platformKey: string }) {

@@ -39,7 +39,7 @@ export interface SyncDataPlatform {
 export interface PlatformInfo {
   type: "DYNAMIC" | "VIDEO"
   name: string // 全局唯一，如 DYNAMIC_DOUYIN
-  platformKey: string // douyin / rednote / okjike / weibo
+  platformKey: string // douyin / rednote / okjike / weibo / channels
   platformName: string
   injectUrl: string
   injectFunction: (data: SyncData) => Promise<void>
