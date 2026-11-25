@@ -70,12 +70,58 @@ function imageFileData(url: string): TweetMediaItem {
   }
 }
 
+// 引用帖容器：x.com 新旧两套标记都要排除，避免把引用内容当成本体
+const QUOTE_SELECTORS = '[data-testid="quoteTweet"], [data-testid="quotedTweet"]'
+
+// 正文：老版用 div[data-testid="tweetText"]，2026-11 改版后去掉 testid，
+// 改为带 lang 属性的文本块，这里做双兼容
+function extractText(article: HTMLElement): string {
+  const join = (nodes: HTMLElement[]) =>
+    nodes
+      .map((n) => (n.innerText || "").trim())
+      .filter(Boolean)
+      .join("\n\n")
+
+  const legacy = Array.from(article.querySelectorAll<HTMLElement>('div[data-testid="tweetText"]'))
+  if (legacy.length > 0) return join(legacy)
+
+  const blocks = Array.from(article.querySelectorAll<HTMLElement>("div[lang], span[lang]")).filter(
+    (el) => !el.closest(QUOTE_SELECTORS)
+  )
+  // 只取最外层，避免父子节点文本重复
+  const outer = blocks.filter((el) => !blocks.some((other) => other !== el && other.contains(el)))
+  return join(outer)
+}
+
+// 图片：老版取 tweetPhoto 内的 img；新版没有该 testid，退回图床地址匹配
+function extractImages(article: HTMLElement): TweetMediaItem[] {
+  const legacy = Array.from(article.querySelectorAll<HTMLImageElement>('div[data-testid="tweetPhoto"] img'))
+  const imgs =
+    legacy.length > 0
+      ? legacy
+      : Array.from(article.querySelectorAll<HTMLImageElement>('img[src*="pbs.twimg.com/media"]')).filter(
+          (img) => !img.closest(QUOTE_SELECTORS)
+        )
+
+  const seen = new Set<string>()
+  const media: TweetMediaItem[] = []
+  for (const img of imgs) {
+    const src = img.currentSrc || img.src
+    if (!src || !src.includes("pbs.twimg.com")) continue
+    const origUrl = withImageSize(src, "orig")
+    if (seen.has(origUrl)) continue
+    seen.add(origUrl)
+    media.push(imageFileData(src))
+  }
+  return media
+}
+
 // 从 article DOM 解析推文自身（非引用推文）的 status id
 function extractTweetId(article: HTMLElement): string | null {
   const anchors = Array.from(article.querySelectorAll<HTMLAnchorElement>('a[href*="/status/"]'))
   const pattern = /^\/[^/]+\/status\/(\d+)/
   // 优先取引用推文区域之外的链接（推文自身的时间戳链接）
-  const outer = anchors.filter((a) => !a.closest('div[data-testid="quoteTweet"]'))
+  const outer = anchors.filter((a) => !a.closest(QUOTE_SELECTORS))
   for (const a of [...outer, ...anchors]) {
     const m = a.getAttribute("href")?.match(pattern)
     if (m) return m[1]
@@ -86,66 +132,73 @@ function extractTweetId(article: HTMLElement): string | null {
 // 从 article DOM 解析作者显示名 / @handle（用于分享卡片）
 function extractAuthor(article: HTMLElement): { authorName: string; authorHandle: string } {
   const userNameEl = article.querySelector('div[data-testid="User-Name"]')
-  if (!userNameEl) return { authorName: "", authorHandle: "" }
 
-  const anchors = Array.from(userNameEl.querySelectorAll<HTMLAnchorElement>("a"))
+  if (userNameEl) {
+    const anchors = Array.from(userNameEl.querySelectorAll<HTMLAnchorElement>("a"))
+    let authorHandle = ""
+    for (const a of anchors) {
+      const text = (a.innerText || "").trim()
+      if (text.startsWith("@") && !authorHandle) {
+        authorHandle = text
+        break
+      }
+    }
+    const nameAnchor = anchors.find((a) => {
+      const href = a.getAttribute("href") || ""
+      const text = (a.innerText || "").trim()
+      return /^\/[^/]+$/.test(href) && text !== "" && !text.startsWith("@")
+    })
+    const authorName = nameAnchor ? nameAnchor.innerText.trim() : ""
+    return { authorName, authorHandle }
+  }
+
+  // 新版兜底：从头部用户名链接里解析
+  const links = Array.from(article.querySelectorAll<HTMLAnchorElement>('a[href^="/"]')).filter(
+    (a) => !a.closest(QUOTE_SELECTORS)
+  )
   let authorHandle = ""
-  for (const a of anchors) {
+  for (const a of links) {
     const text = (a.innerText || "").trim()
-    if (text.startsWith("@") && !authorHandle) {
+    if (/^@[A-Za-z0-9_]{1,15}$/.test(text)) {
       authorHandle = text
       break
     }
   }
-  const nameAnchor = anchors.find((a) => {
+  const nameAnchor = links.find((a) => {
     const href = a.getAttribute("href") || ""
     const text = (a.innerText || "").trim()
-    return /^\/[^/]+$/.test(href) && text !== "" && !text.startsWith("@")
+    return /^\/[A-Za-z0-9_]{1,15}$/.test(href) && text !== "" && !text.startsWith("@")
   })
-  const authorName = nameAnchor ? nameAnchor.innerText.trim() : ""
-  return { authorName, authorHandle }
+  return { authorName: nameAnchor ? nameAnchor.innerText.trim() : "", authorHandle }
 }
 
-// 从推文操作栏按钮（reply/retweet/like/bookmark）提取格式化的互动数
-function buttonCount(article: HTMLElement, testid: string): string {
-  const btn = article.querySelector(`button[data-testid="${testid}"]`)
+// 从操作栏按钮提取格式化的互动数。
+// 老版用 button[data-testid="like"]，新版用 data-engagement-action="like"
+function buttonCount(article: HTMLElement, testid: string, action: string): string {
+  const btn =
+    article.querySelector(`button[data-testid="${testid}"]`) ??
+    article.querySelector(`[data-engagement-action="${action}"]`)
   if (!btn) return ""
   const span = btn.querySelector("span")
   const text = span?.innerText?.trim()
   if (text) return text
-  // 回复数为 0 时按钮里没有 span，退回 aria-label（如「25 replies. Reply」/「25 回复」）
+  // 回复数为 0 时按钮里没有 span，退回 aria-label（如「25 replies. Reply」/「39 次加入书签。加入书签」）
   const label = btn.getAttribute("aria-label") ?? ""
   const m = label.match(/\d[\d.,]*\s*[KMB]?/i)
   return m ? m[0].trim() : ""
 }
 
-// 浏览数在 analytics 链接里（如「14.4K Views」/「14.4K 次查看」）
+// 浏览数：老版在 analytics 链接里；新版去掉了链接，退回正文文本匹配
 function extractViews(article: HTMLElement): string {
   const link = article.querySelector<HTMLAnchorElement>('a[href$="/analytics"]')
-  if (!link) return ""
-  return (link.innerText || "").replace(/views?|次浏览|次查看/gi, "").trim()
+  if (link) return (link.innerText || "").replace(/views?|次浏览|次查看/gi, "").trim()
+  const m = (article.innerText || "").match(/([\d.,]+\s*(?:[KMB]|万|亿)?)\s*次?\s*(?:浏览|查看|views?)/i)
+  return m ? m[1].trim() : ""
 }
 
 export function extractTweet(article: HTMLElement): ExtractedTweet {
-  // 文本：普通推文 + 引用推文的文本都在 tweetText 里，按顺序拼接
-  const textNodes = article.querySelectorAll<HTMLDivElement>('div[data-testid="tweetText"]')
-  const text = Array.from(textNodes)
-    .map((n) => n.innerText.trim())
-    .filter(Boolean)
-    .join("\n\n")
-
-  // 图片：tweetPhoto 内的 img，过滤出推特图床地址
-  const imgNodes = article.querySelectorAll<HTMLImageElement>('div[data-testid="tweetPhoto"] img')
-  const seen = new Set<string>()
-  const media: TweetMediaItem[] = []
-  for (const img of imgNodes) {
-    const src = img.currentSrc || img.src
-    if (!src || !src.includes("pbs.twimg.com")) continue
-    const origUrl = withImageSize(src, "orig")
-    if (seen.has(origUrl)) continue
-    seen.add(origUrl)
-    media.push(imageFileData(src))
-  }
+  const text = extractText(article)
+  const media = extractImages(article)
 
   // 视频检测：article 内存在 video 元素（src 是 blob，真实地址需走 syndication 接口）
   const videoEl = article.querySelector("video")
@@ -157,18 +210,23 @@ export function extractTweet(article: HTMLElement): ExtractedTweet {
 
   // 作者信息（分享卡片用）
   const { authorName, authorHandle } = extractAuthor(article)
-  const avatarEl = article.querySelector<HTMLImageElement>('div[data-testid="Tweet-User-Avatar"] img')
+  const avatarEl =
+    article.querySelector<HTMLImageElement>('div[data-testid="Tweet-User-Avatar"] img') ??
+    article.querySelector<HTMLImageElement>('img[src*="profile_images"]')
   const avatarUrl = avatarEl?.src || null
-  const verified = Boolean(article.querySelector('[data-testid="icon-verified"]'))
+  // 认证徽章：老版是 icon-verified，新版是一个 aria-label="认证账号" 的元素
+  const verified = Boolean(
+    article.querySelector('[data-testid="icon-verified"], [aria-label*="认证"], [aria-label*="Verified"]')
+  )
   const datetime = article.querySelector("time")?.getAttribute("datetime")
   const dateText = datetime
     ? new Date(datetime).toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" })
     : ""
   const stats: TweetStats = {
-    replies: buttonCount(article, "reply"),
-    retweets: buttonCount(article, "retweet"),
-    likes: buttonCount(article, "like"),
-    bookmarks: buttonCount(article, "bookmark"),
+    replies: buttonCount(article, "reply", "reply"),
+    retweets: buttonCount(article, "retweet", "retweet"),
+    likes: buttonCount(article, "like", "like"),
+    bookmarks: buttonCount(article, "bookmark", "bookmark"),
     views: extractViews(article)
   }
   const tweetUrl =

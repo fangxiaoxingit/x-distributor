@@ -168,7 +168,19 @@ export function DistributePanel() {
       setGeneratingCards(false)
       setConfigOpen(false)
 
-      const tweet = extractTweet(article)
+      let tweet: ReturnType<typeof extractTweet>
+      try {
+        tweet = extractTweet(article)
+      } catch (error) {
+        console.error("[X分发] 解析推文失败:", error)
+        setNotice("解析推文失败，请刷新页面后重试")
+        return
+      }
+      // x.com 改版后 data-testid 会变，解析不到内容时给出明确提示而不是空白面板
+      if (!tweet.text && tweet.media.length === 0 && !tweet.hasVideo) {
+        console.warn("[X分发] 未解析到正文与媒体，x.com DOM 可能又改版了")
+        setNotice("未能解析到该帖内容，可能是 x.com 页面结构变化，刷新后重试")
+      }
       setTweetInfo(tweet)
       setContent(tweet.text)
       setDetectedMode(tweet.hasVideo ? "VIDEO" : "DYNAMIC")
