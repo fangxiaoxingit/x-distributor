@@ -29,8 +29,8 @@ function createDistributeButton(): HTMLElement {
   wrap.setAttribute(BUTTON_FLAG, "1")
   const btn = document.createElement("button")
   btn.type = "button"
-  btn.setAttribute("aria-label", "分发到抖音/小红书/即刻")
-  btn.title = "分发到抖音 / 小红书 / 即刻"
+  btn.setAttribute("aria-label", "分发到抖音/小红书/即刻/微博/视频号")
+  btn.title = "分发到抖音 / 小红书 / 即刻 / 微博 / 视频号"
   btn.innerHTML = SEND_SVG
   // 用 CSSOM 直接赋样式（不经过 <style> 标签，不受页面 CSP 影响）
   Object.assign(btn.style, {
@@ -68,22 +68,73 @@ function createDistributeButton(): HTMLElement {
   return wrap
 }
 
-// 操作栏：以回复按钮为锚点定位其所在 role=group，避免误中其他分组
+// 操作栏定位：x.com 在 2026-11 改版，操作栏按钮从
+// `button[data-testid="reply"]` + `div[role="group"]` 换成了 `data-engagement-action`，
+// 例如 <button data-engagement-action="share" data-slot="xds-menu-trigger">。
+// 新版的分享按钮是操作栏里最后一个动作，直接用它所在的行容器作锚点；
+// 同时保留旧版选择器兜底。
 function findActionBar(article: HTMLElement): HTMLElement | null {
-  const replyBtn = article.querySelector('button[data-testid="reply"]')
+  // 用最后一个匹配：推文内若嵌了引用帖，其操作栏会比本体更早出现
+  const lastOf = <T extends Element>(selector: string): T | null => {
+    const list = article.querySelectorAll<T>(selector)
+    return list.length > 0 ? list[list.length - 1] : null
+  }
+
+  // 新版：以分享按钮为锚点，它的直接父节点就是尾部动作组（收藏 + 分享）
+  const share = lastOf<HTMLElement>('[data-engagement-action="share"]')
+  const newBar = share?.parentElement
+  if (newBar && newBar !== article && article.contains(newBar)) return newBar
+
+  // 新版兜底：任何带 data-engagement-action 的容器
+  const anyAction = lastOf<HTMLElement>("[data-engagement-action]")
+  const actionBar = anyAction?.parentElement
+  if (actionBar && actionBar !== article && article.contains(actionBar)) return actionBar
+
+  // 旧版：以回复按钮为锚点定位其所在 role=group
+  const replyBtn = lastOf<HTMLElement>('button[data-testid="reply"]')
   const group = replyBtn?.closest('div[role="group"]') as HTMLElement | null
   if (group) return group
   const groups = article.querySelectorAll<HTMLElement>('div[role="group"]')
   return groups.length > 0 ? groups[groups.length - 1] : null
 }
 
+// 推文容器同样做过改版，逐个补齐候选
+function findArticles(): HTMLElement[] {
+  const set = new Set<HTMLElement>()
+  for (const selector of ['article[data-testid="tweet"]', 'article[role="article"]', "article"]) {
+    document.querySelectorAll<HTMLElement>(selector).forEach((el) => set.add(el))
+  }
+  return Array.from(set)
+}
+
+let lastScanLog = 0
+let firstInjectLogged = false
 function scanAndInject() {
-  const articles = document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')
+  const articles = findArticles()
+  let injected = 0
+  let matched = 0
   for (const article of articles) {
     const bar = findActionBar(article)
     if (!bar) continue
+    matched++
     if (bar.querySelector(`[${BUTTON_FLAG}]`)) continue
     bar.appendChild(createDistributeButton())
+    injected++
+  }
+  // 一条都没命中时打个节流日志，方便下次平台改版时快速定位
+  if (articles.length > 0 && matched === 0 && Date.now() - lastScanLog > 10000) {
+    lastScanLog = Date.now()
+    console.warn(
+      "[X分发] 未找到推文操作栏，页面结构可能又改版了：",
+      `article=${articles.length}，` +
+        `data-engagement-action=${document.querySelectorAll("[data-engagement-action]").length}，` +
+        `role=group=${document.querySelectorAll('div[role="group"]').length}`
+    )
+  }
+  // 只打一次，避免虚拟列表滚动时刷屏
+  if (injected > 0 && !firstInjectLogged) {
+    firstInjectLogged = true
+    console.log(`[X分发] 分发图标注入正常（本轮 ${injected} 个）`)
   }
 }
 
