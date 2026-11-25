@@ -59,10 +59,16 @@ function createDistributeButton(): HTMLElement {
   btn.addEventListener("click", (e) => {
     e.stopPropagation()
     e.preventDefault()
-    const article = btn.closest("article") as HTMLElement | null
-    if (article) {
-      bus.emit("open-panel", { article })
+    // 兜底：万一按钮被渲染到 article 之外，退到所在 cell 里再找一次
+    const article =
+      btn.closest("article") ??
+      (btn.closest('[data-testid="cellInnerDiv"]')?.querySelector("article") as HTMLElement | null) ??
+      null
+    if (!article) {
+      console.warn("[X分发] 点击图标但未找到所属推文节点")
+      return
     }
+    bus.emit("open-panel", { article })
   })
   wrap.appendChild(btn)
   return wrap
@@ -107,15 +113,34 @@ function findArticles(): HTMLElement[] {
   return Array.from(set)
 }
 
+// 详情页 URL 形如 /<user>/status/<id>：此时只应给「本体推文」注入图标，
+// 评论区里的每条回复也是 <article>，不加图标
+function focalStatusId(): string | null {
+  const m = location.pathname.match(/\/status\/(\d+)/)
+  return m ? m[1] : null
+}
+
+function isFocalArticle(article: HTMLElement, statusId: string): boolean {
+  return Boolean(article.querySelector(`a[href*="/status/${statusId}"]`))
+}
+
 let lastScanLog = 0
 let firstInjectLogged = false
 function scanAndInject() {
   const articles = findArticles()
+  const focal = focalStatusId()
   let injected = 0
   let matched = 0
   for (const article of articles) {
     const bar = findActionBar(article)
     if (!bar) continue
+
+    // 详情页里跳过评论区的回复帖，并清掉之前误注入的图标
+    if (focal && !isFocalArticle(article, focal)) {
+      bar.querySelectorAll(`[${BUTTON_FLAG}]`).forEach((el) => el.remove())
+      continue
+    }
+
     matched++
     if (bar.querySelector(`[${BUTTON_FLAG}]`)) continue
     bar.appendChild(createDistributeButton())
